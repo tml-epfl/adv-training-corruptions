@@ -29,15 +29,16 @@ state-of-the-art performance on common corruptions.
 First of all, we observe that even L<sub>p</sub> adversarial training (e.g., for p in {2, inf}) can lead to significant improvements on common corruptions
 and be competitive to other natural baselines:
 <p align="center">
-    <img src="images/linf_at_helps.png" width="400">
-    <img src="images/l2_at_vs_natural_baselines.png" width="400">
+    <img src="images/linf_at_helps.png" width="360">
+    <img src="images/l2_at_vs_natural_baselines.png" width="360">
 </p>
 
 Next, we discuss the *σ-overfitting phenomenon* when Gaussian augmentation overfits to a particular standard deviation used for training. 
 This can be seen particularly clearly on ImageNet-100:
 <p align="center"><img src="images/sigma_overfitting_imagenet.png" width="800"></p>
 As we show in the experimental part, this leads to significantly suboptimal results on common corruptions that, however, 
-can be improved by augmenting only 50% images per batch (as done, e.g., in [Rusak et al., 2020](https://arxiv.org/abs/2001.06057)).
+can be improved by augmenting only 50% images per batch (as done, e.g., in Rusak et al, (2020)).
+<br/>
 
 Then we show how to improve adversarial training by using the LPIPS distance instead of the standard L<sub>p</sub> distances.
 First, we discuss why LPIPS can be more suitable than L<sub>2</sub> norm on common corruptions. We observe that L<sub>2</sub> norm
