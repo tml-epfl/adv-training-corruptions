@@ -50,7 +50,7 @@ def get_args():
     parser.add_argument('--eps', default=8.0, type=float)
     parser.add_argument('--attack_iters', default=1, type=int, help='n_iter of pgd for evaluation')
     parser.add_argument('--pgd_train_n_iters', default=1, type=int, help='n_iter of pgd for training (if attack=pgd)')
-    parser.add_argument('--pgd_alpha_train', default=127.5, type=float)
+    parser.add_argument('--pgd_alpha_train', default=0.5, type=float)
     parser.add_argument('--normreg', default=0.0, type=float) # Can be used for numerical stability
     parser.add_argument('--grad-reg', default=0.00, type=float)
     parser.add_argument('--distance', default='linf', type=str)
@@ -125,6 +125,9 @@ def get_output_of_layers(model, X, layers):
         handle.remove()
     return outputs
 
+def shape_hook(m, inp, out):
+    delta_shapes.append(out.shape)
+
 def main():
     pil_logger = logging.getLogger('PIL')
     pil_logger.setLevel(logging.INFO)
@@ -156,8 +159,8 @@ def main():
     if args.activation == 'softplus':  # only implemented for resnet18 currently
         assert args.model == 'resnet18'
 
-    args.pgd_alpha = args.eps / 4  # may seem too large e.g. for eps=8, but see the ablation study in Croce and Hein, 2020
-    eps, pgd_alpha, pgd_alpha_train = args.eps / 255, args.pgd_alpha / 255, args.pgd_alpha_train / 255
+    args.pgd_alpha = args.eps / 4
+    eps, pgd_alpha, pgd_alpha_train = args.eps, args.pgd_alpha, args.pgd_alpha_train
 
     train_data_augm = False if args.dataset in ['mnist', 'mnist_binary'] else True
     train_batches = data.get_loaders(args.dataset, -1, args.batch_size, train_set=True, shuffle=True, data_augm=train_data_augm, n_train=args.n_train, drop_last=True)
@@ -165,6 +168,7 @@ def main():
     test_batches = data.get_loaders(args.dataset, args.n_final_eval, args.batch_size_eval, train_set=False, shuffle=False, data_augm=False, drop_last=False)
     test_batches_fast = data.get_loaders(args.dataset, args.n_eval_every_k_iter, args.batch_size_eval, train_set=False, shuffle=False, data_augm=False, drop_last=False)
 
+    cifar_norm = True
     if args.dataset == 'cifar10':
         x_clean, y_clean = load_cifar10(n_examples=10000, data_dir='../data')
         x_corrs = []
@@ -189,130 +193,15 @@ def main():
             x_corrs_fast.append(x_)
             y_corrs_fast.append(y_)
 
-        cifar_norm = True #False if args.augmix else True
-    else:
-        cifar_norm = True
-
     model = models.get_model(args.model, n_cls, half_prec, data.shapes_dict[args.dataset], args.model_width, args.n_filters_cnn,
                              args.n_hidden_fc, args.activation, cifar_norm=cifar_norm).cuda()
 
     if args.parallel:
         model = torch.nn.DataParallel(model).cuda()
-
-    #model.apply(utils.initialize_weights) default initialization instead to be closer to robustbench
-
-    def shape_hook(m, inp, out):
-        delta_shapes.append(out.shape)
-
     
     if args.attack == 'rlat':
         if args.model == 'resnet18' or args.model == 'resnet50':
-            layers_dict = {
-                'default' :[model.normalize,
-                model.conv1,
-                model.layer1,
-                model.layer2,
-                model.layer3,
-                model.layer4],
-                'lpips': [model.conv1,
-                model.layer1,
-                model.layer2,
-                model.layer3,
-                model.layer4],
-                'all': [model.normalize,
-                model.conv1,
-                model.layer1[0].bn1,
-                model.layer1[0].conv1,
-                model.layer1[0].bn2,
-                model.layer1[0].conv2,
-                model.layer1[1].bn1,
-                model.layer1[1].conv1,
-                model.layer1[1].bn2,
-                model.layer1[1].conv2,
-                model.layer1,
-                model.layer2[0].bn1,
-                model.layer2[0].conv1,
-                model.layer2[0].bn2,
-                model.layer2[0].conv2,
-                model.layer2[1].bn1,
-                model.layer2[1].conv1,
-                model.layer2[1].bn2,
-                model.layer2[1].conv2,
-                model.layer2,
-                model.layer3[0].bn1,
-                model.layer3[0].conv1,
-                model.layer3[0].bn2,
-                model.layer3[0].conv2,
-                model.layer3[1].bn1,
-                model.layer3[1].conv1,
-                model.layer3[1].bn2,
-                model.layer3[1].conv2,
-                model.layer3,
-                model.layer4[0].bn1,
-                model.layer4[0].conv1,
-                model.layer4[0].bn2,
-                model.layer4[0].conv2,
-                model.layer4[1].bn1,
-                model.layer4[1].conv1,
-                model.layer4[1].bn2,
-                model.layer4[1].conv2,
-                model.layer4,],
-                'bnonly': [model.normalize,
-                model.layer1[0].bn1,
-                model.layer1[0].bn2,
-                model.layer1[1].bn1,
-                model.layer1[1].bn2,
-                model.layer2[0].bn1,
-                model.layer2[0].bn2,
-                model.layer2[1].bn1,
-                model.layer2[1].bn2,
-                model.layer3[0].bn1,
-                model.layer3[0].bn2,
-                model.layer3[1].bn1,
-                model.layer3[1].bn2,
-                model.layer4[0].bn1,
-                model.layer4[0].bn2,
-                model.layer4[1].bn1,
-                model.layer4[1].bn2],
-                'bn1only': [model.normalize,
-                model.layer1[0].bn1,
-                model.layer1[1].bn1,
-                model.layer2[0].bn1,
-                model.layer2[1].bn1,
-                model.layer3[0].bn1,
-                model.layer3[1].bn1,
-                model.layer4[0].bn1,
-                model.layer4[1].bn1],
-                'convonly': [model.normalize,
-                model.conv1,
-                model.layer1[0].conv1,
-                model.layer1[0].conv2,
-                model.layer1[1].conv1,
-                model.layer1[1].conv2,
-                model.layer2[0].conv1,
-                model.layer2[0].conv2,
-                model.layer2[1].conv1,
-                model.layer2[1].conv2,
-                model.layer3[0].conv1,
-                model.layer3[0].conv2,
-                model.layer3[1].conv1,
-                model.layer3[1].conv2,
-                model.layer4[0].conv1,
-                model.layer4[0].conv2,
-                model.layer4[1].conv1,
-                model.layer4[1].conv2],
-                'conv1only': [model.normalize,
-                model.conv1,
-                model.layer1[0].conv1,
-                model.layer1[1].conv1,
-                model.layer2[0].conv1,
-                model.layer2[1].conv1,
-                model.layer3[0].conv1,
-                model.layer3[1].conv1,
-                model.layer4[0].conv1,
-                model.layer4[1].conv1],
-                'single': [model.layer2]
-            }
+            layers_dict = models.get_layers_dict(model)
         delta_shapes = []
         layers = layers_dict[args.layers]
         delta_max = len(layers)
