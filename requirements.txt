@@ -1,0 +1,7 @@
+pytorch~=1.7.1
+torchvision~=0.8.2
+numpy~=1.19.4
+pandas~=1.2.0
+robustness~=1.2.1
+-q git+https://github.com/RobustBench/robustbench.git@b3640ccdeed2dd3c3ab119a837f1aca70ff34cd0#egg=robustbench
+
