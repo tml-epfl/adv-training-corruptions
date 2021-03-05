@@ -64,7 +64,6 @@ when combined with different data augmentation methods.
 
 
 
-
 ## Code
 The main dependencies are specified in `requirements.txt`. To train new models, one can use the following commands:
 
@@ -79,6 +78,11 @@ The main dependencies are specified in `requirements.txt`. To train new models, 
 
 
 
+## Models
+We provide all the models reported in Tables 3 and 4 in [this Google drive folder](https://drive.google.com/drive/folders/1drD6E3xX2ERjIuYoZjFleTZ7rr7WcYBq?usp=sharing).
 
-### Models
-Coming soon.
+
+
+## Full evaluation results
+We additionally provide detailed evaluation results for each corruption type and each severity level for all CIFAR-10 
+and ImageNet-100 models in folder `full_evaluation_results`.

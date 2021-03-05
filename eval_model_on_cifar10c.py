@@ -1,28 +1,17 @@
 import argparse
-import os
-import time
 import numpy as np
-import apex.amp as amp
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import copy
-import utils
 import data
 import models
 import pandas as pd
-import random
-from collections import defaultdict
-from datetime import datetime
-from utils import eval_dataset
 
 from robustbench.data import load_cifar10c, load_cifar10
 from robustbench.utils import clean_accuracy
 
 
 corruptions = ['shot_noise', 'motion_blur', 'snow', 'pixelate', 'gaussian_noise', 'defocus_blur',
-                                 'brightness', 'fog', 'zoom_blur', 'frost', 'glass_blur', 'impulse_noise', 'contrast',
-                                 'jpeg_compression', 'elastic_transform']
+               'brightness', 'fog', 'zoom_blur', 'frost', 'glass_blur', 'impulse_noise', 'contrast',
+               'jpeg_compression', 'elastic_transform']
 
 
 def corr_eval(x_corrs, y_corrs, model):
@@ -35,6 +24,7 @@ def corr_eval(x_corrs, y_corrs, model):
 
     return res
 
+
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', default=128, type=int)
@@ -45,10 +35,11 @@ def get_args():
     parser.add_argument('--only-clean', action='store_true')
     return parser.parse_args()
 
+
 def main():
     args = get_args()
     x_clean, y_clean = load_cifar10(n_examples=10000, data_dir=args.data_dir)
-    cifar_norm = True #False if args.augmix else True
+    cifar_norm = True
 
     if args.model == 'resnet18':
         model = models.get_model(args.model, 10, False, data.shapes_dict['cifar10'], 64, 16,
@@ -57,8 +48,6 @@ def main():
         if args.checkpoint != '':
             model.load_state_dict(torch.load(args.checkpoint)['last'])
 
-
-    
     model.eval()
 
     clean_acc = clean_accuracy(model, x_clean.cuda(), y_clean.cuda())
@@ -94,6 +83,7 @@ def main():
     corr_data_last.to_csv(args.output)
     print(corr_data_last)
     return 0
+
 
 if __name__ == "__main__":
     main()
