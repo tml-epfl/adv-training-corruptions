@@ -157,6 +157,11 @@ def main():
 
         handles = [layer.register_forward_hook(shape_hook) for layer in layers]
 
+        if args.dataset == 'cifar10':
+            out = model(torch.zeros((args.batch_size, 3, 32, 32)).cuda())
+        else:
+            out = model(torch.zeros((args.batch_size, 3, 224, 224)).cuda())
+
         for handle in handles:
             handle.remove()
 
