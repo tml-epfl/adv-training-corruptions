@@ -2,51 +2,45 @@ import argparse
 import os
 import time
 import numpy as np
-import apex.amp as amp
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import copy
 import utils
-import data
 import models
 import pandas as pd
 import random
+import data
 from collections import defaultdict
 from datetime import datetime
 from utils import rob_err, clamp, eval_dataset
 import logging
 
-from robustbench.data import load_cifar10c, load_cifar10
 from robustbench.utils import clean_accuracy
-
-corruptions = ['shot_noise', 'motion_blur', 'snow', 'pixelate', 'gaussian_noise', 'defocus_blur',
-                                 'brightness', 'fog', 'zoom_blur', 'frost', 'glass_blur', 'impulse_noise', 'contrast',
-                                 'jpeg_compression', 'elastic_transform']
 
 
 def corr_eval(x_corrs, y_corrs, model):
     model.eval()
     res = np.zeros((5, 15))
     for i in range(1, 6):
-        for j, c in enumerate(corruptions):
+        for j, c in enumerate(data.corruptions):
             res[i-1, j] = clean_accuracy(model, x_corrs[i][j].cuda(), y_corrs[i][j].cuda())
 
     return res
 
+
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', default=128, type=int)
-
-    parser.add_argument('--data_dir', default='../cifar-data', type=str)
+    parser.add_argument('--data_dir', default='./datasets/', type=str)
     parser.add_argument('--dataset', default='cifar10', choices=['mnist', 'mnist_binary', 'svhn', 'cifar10', 'cifar10_binary', 'cifar10_binary_gs',
                                                                  'uniform_noise', 'imagenet100'], type=str)
-    parser.add_argument('--model', default='resnet18', choices=['resnet50','resnet18', 'lenet', 'cnn', 'fc', 'linear'], type=str)
+    parser.add_argument('--model', default='resnet18', choices=['resnet18'], type=str)
     parser.add_argument('--epochs', default=30, type=int,
                         help='15 epochs to reach 45% adv err, 30 epochs to reach the reported clean/adv errs')
     parser.add_argument('--lr_schedule', default='piecewise', choices=['cyclic', 'piecewise'])
     parser.add_argument('--lr_max', default=0.1, type=float, help='0.05 in Table 1, 0.2 in Figure 2')
-    parser.add_argument('--attack', default='none', type=str, choices=['pgd', 'pgd_corner', 'fgsm', 'random_noise', 'free', 'none', 'sigma', 'rlat', 'random_gs'])
+    parser.add_argument('--attack', default='none', type=str, choices=['pgd', 'pgd_corner', 'fgsm', 'random_noise', 'free', 'none', 'rlat', 'random_gs'])
     parser.add_argument('--eps', default=8.0, type=float)
     parser.add_argument('--attack_iters', default=1, type=int, help='n_iter of pgd for evaluation')
     parser.add_argument('--pgd_train_n_iters', default=1, type=int, help='n_iter of pgd for training (if attack=pgd)')
@@ -69,33 +63,21 @@ def get_args():
     parser.add_argument('--attack_init', default='zero', choices=['zero', 'random'])
     parser.add_argument('--random_grad_reg', default='random_uniform', choices=['random_uniform', 'random_noise'], help='at which point to take the 2nd grad (and also the 1st if enabled)')
     parser.add_argument('--activation', default='relu', type=str, help='currently supported only for resnet. relu or softplusA where A corresponds to the softplus alpha')
-    parser.add_argument('--optimizer', default='sgdm', choices=['sgd', 'sgdm', 'adam'], type=str, help='Optimizer.')
     parser.add_argument('--rm_criterion', default='loss', choices=['loss', 'entropy'], type=str, help='Points with the highest values of this metric will be removed from the train set.')
     parser.add_argument('--loss', default='cross_entropy', choices=['cross_entropy', 'squared'], type=str, help='Loss.')
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--adv-part', default=1.0, type=float)
     parser.add_argument('--batch-part', default=1.0, type=float)
     parser.add_argument('--gpu', default=0, type=int)
-
     parser.add_argument('--parallel', action='store_true')
-    parser.add_argument('--export_images', action='store_true')
-    parser.add_argument('--debug', action='store_true')
-    parser.add_argument('--final_adv_eval', action='store_true')
-    parser.add_argument('--half_prec', action='store_true', help='if enabled, runs everything as half precision [not recommended]')
-    parser.add_argument('--no_data_augm', action='store_true')
-    parser.add_argument('--eval_early_stopped_model', action='store_true', help='whether to evaluate the model obtained via early stopping')
     parser.add_argument('--eval_iter_freq', default=1000, type=int, help='how often to evaluate test stats')
     parser.add_argument('--n_eval_every_k_iter', default=1024, type=int, help='on how many examples to eval every k iters')
-    parser.add_argument('--n_layers', default=1, type=int, help='#layers (for model in [fc, cnn])')
     parser.add_argument('--model_width', default=64, type=int, help='model width (# conv filters on the first layer for ResNets)')
-    parser.add_argument('--n_filters_cnn', default=16, type=int, help='#filters on each conv layer (for model==cnn)')
-    parser.add_argument('--n_hidden_fc', default=1024, type=int, help='#hidden units on each conv layer (for model==fc)')
-    parser.add_argument('--batch_size_eval', default=128, type=int, help='batch size for the final eval with pgd rr; 6 GB memory is consumed for 1024 examples with fp32 network')
-    parser.add_argument('--n_final_eval', default=1000, type=int, help='on how many examples to do the final evaluation; -1 means on all test examples.')
+    parser.add_argument('--batch_size_eval', default=128, type=int, help='batch size for evaluations')
     return parser.parse_args()
 
+
 def delta_forward(model, X, deltas, layers):
-    
     i = 0
     def out_hook(m, inp, out_layer):
         nonlocal i
@@ -113,92 +95,59 @@ def delta_forward(model, X, deltas, layers):
         handle.remove()
     return out
 
-def get_output_of_layers(model, X, layers):
-    outputs = []
-    def out_hook(m, inp, out):
-        outputs.append(out)
-    
-    handles = [layer.register_forward_hook(out_hook) for layer in layers]
-    out = model(X)
-
-    for handle in handles:
-        handle.remove()
-    return outputs
-
-def shape_hook(m, inp, out):
-    delta_shapes.append(out.shape)
 
 def main():
     pil_logger = logging.getLogger('PIL')
     pil_logger.setLevel(logging.INFO)
     args = get_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+    for folder in ['logs', 'exps', 'models']:
+        if not os.path.exists(folder):
+            os.makedirs(folder)
 
     cur_timestamp = str(datetime.now())[:-3]  # include also ms to prevent the probability of name collision
-    model_width = {'linear': '', 'fc': args.n_hidden_fc, 'cnn': args.n_filters_cnn, 'lenet': '', 'resnet18': '', 'resnet50': ''}[args.model]
-    model_str = '{}{}'.format(args.model, model_width)
-    model_name = '{} dataset={} model={} eps={} attack={} epochs={} batch_size={} lr_max={} model_width={} weight_decay={} n_train={} epoch_rm_noise={} n_rm_pts={} seed={}'.format(
+    model_str = '{}{}'.format(args.model, args.model_width)
+    model_name = '{} dataset={} model={} eps={} attack={} epochs={} batch_size={} lr_max={} weight_decay={} n_train={} epoch_rm_noise={} n_rm_pts={} seed={}'.format(
         cur_timestamp, args.dataset, model_str, args.eps, args.attack, args.epochs, args.batch_size, args.lr_max,
-        args.model_width, args.weight_decay, args.n_train, args.epoch_rm_noise, args.n_rm_pts, args.seed)
-    logger = utils.configure_logger(model_name, args.debug)
+        args.weight_decay, args.n_train, args.epoch_rm_noise, args.n_rm_pts, args.seed)
+    logger = utils.configure_logger(model_name, False)
     logger.info(args)
-    half_prec = args.half_prec
     n_cls = 2 if 'binary' in args.dataset else 10
     if args.dataset == 'imagenet100':
         n_cls = 1000
-
-    if not os.path.exists('exps'): os.makedirs('exps')
-    if not os.path.exists('images'): os.makedirs('images')
 
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
-    #torch.backends.cudnn.deterministic = True
 
     if args.activation == 'softplus':  # only implemented for resnet18 currently
         assert args.model == 'resnet18'
 
     args.pgd_alpha = args.eps / 4
     eps, pgd_alpha, pgd_alpha_train = args.eps, args.pgd_alpha, args.pgd_alpha_train
+    adv_step = False if eps == 0.0 else True
 
     train_data_augm = False if args.dataset in ['mnist', 'mnist_binary'] else True
     train_batches = data.get_loaders(args.dataset, -1, args.batch_size, train_set=True, shuffle=True, data_augm=train_data_augm, n_train=args.n_train, drop_last=True)
     train_batches_fast = data.get_loaders(args.dataset, args.n_eval_every_k_iter, args.batch_size_eval, train_set=True, shuffle=False, data_augm=False, n_train=args.n_train, drop_last=False)
-    test_batches = data.get_loaders(args.dataset, args.n_final_eval, args.batch_size_eval, train_set=False, shuffle=False, data_augm=False, drop_last=False)
     test_batches_fast = data.get_loaders(args.dataset, args.n_eval_every_k_iter, args.batch_size_eval, train_set=False, shuffle=False, data_augm=False, drop_last=False)
 
     cifar_norm = True
     if args.dataset == 'cifar10':
-        x_clean, y_clean = load_cifar10(n_examples=10000, data_dir='../data')
-        x_corrs = []
-        y_corrs = []
-        x_corrs.append(x_clean)
-        y_corrs.append(y_clean)
-        for i in range(1, 6):
-            x_corr = []
-            y_corr = []
-            for j, corr in enumerate(corruptions):
-                x_, y_ = load_cifar10c(n_examples=10000, data_dir='../data', severity=i, corruptions=(corr,))
-                x_corr.append(x_)
-                y_corr.append(y_)
+        x_corrs, y_corrs, x_corrs_fast, y_corrs_fast = data.get_cifar10_numpy()
 
-            x_corrs.append(x_corr)
-            y_corrs.append(y_corr)
-
-        x_corrs_fast = []
-        y_corrs_fast = []
-        for i in range(1, 6):
-            x_, y_ = load_cifar10c(n_examples=1000, data_dir='../data', severity=i, shuffle=True)
-            x_corrs_fast.append(x_)
-            y_corrs_fast.append(y_)
-
-    model = models.get_model(args.model, n_cls, half_prec, data.shapes_dict[args.dataset], args.model_width, args.n_filters_cnn,
-                             args.n_hidden_fc, args.activation, cifar_norm=cifar_norm).cuda()
-
+    if args.dataset == 'cifar10':
+        model = models.PreActResNet18(n_cls, model_width=args.model_width, cifar_norm=cifar_norm)
+    else:
+        model = models.PreActResNet18_I(n_cls, model_width=args.model_width, cifar_norm=cifar_norm)
+    model = model.cuda()
     if args.parallel:
-        model = torch.nn.DataParallel(model).cuda()
-    
+        model = torch.nn.DataParallel(model)
+
+    def shape_hook(m, inp, out):
+        delta_shapes.append(out.shape)
+
     if args.attack == 'rlat':
         if args.model == 'resnet18' or args.model == 'resnet50':
             layers_dict = models.get_layers_dict(model)
@@ -207,14 +156,11 @@ def main():
         delta_max = len(layers)
 
         handles = [layer.register_forward_hook(shape_hook) for layer in layers]
-        if args.dataset == 'cifar10':
-            out = model(torch.zeros((args.batch_size, 3, 32, 32)).cuda())
-        else:
-            out = model(torch.zeros((args.batch_size, 3, 224, 224)).cuda())
 
         for handle in handles:
             handle.remove()
 
+        print(delta_shapes)
 
         if args.eps_policy == 'scaling':
             if args.dataset == 'cifar10':
@@ -246,20 +192,9 @@ def main():
 
     model.train()
 
-
     params = model.parameters()
 
-    if args.optimizer == 'sgd':
-        opt = torch.optim.SGD(params, lr=args.lr_max, momentum=0.0, weight_decay=args.weight_decay)
-    elif args.optimizer == 'sgdm':
-        opt = torch.optim.SGD(params, lr=args.lr_max, momentum=0.9, weight_decay=args.weight_decay)
-    elif args.optimizer == 'adam':
-        opt = torch.optim.Adam(params, lr=args.lr_max, weight_decay=args.weight_decay)
-    else:
-        raise ValueError('decide about the right optimizer for the new model')
-
-    if half_prec:
-        model, opt = amp.initialize(model, opt, opt_level="O1")
+    opt = torch.optim.SGD(params, lr=args.lr_max, momentum=0.9, weight_decay=args.weight_decay)
 
     lr_schedule = utils.get_lr_schedule(args.lr_schedule, args.epochs, args.lr_max)
     loss_function = nn.CrossEntropyLoss() if args.loss == 'cross_entropy' else nn.MSELoss()
@@ -270,21 +205,11 @@ def main():
     time_train, iteration, best_iteration = 0, 0, 0
     train_loss, train_err_clean, train_n_clean, grad_norm_x, avg_delta_l2 = \
         0, 0, 0, 0, 0
-    margin_clean, margin_ln = 0, 0
     for epoch in range(args.epochs + 1):
         grad_norm_avg = 0        
 
-
         for i, (X, y) in enumerate(train_batches):
-            
             X, y = X.cuda(), y.cuda()
-            
-
-            adv_step = True
-
-            if eps == 0.0:
-                adv_step = False
-
 
             if epoch == 0 and i > 0:  # epoch=0 runs only for one iteration (to check the training stats at init)
                 break
@@ -299,7 +224,7 @@ def main():
                     n_iterations_max_eps = n_eps_warmup_epochs * data.shapes_dict[args.dataset][0] // args.batch_size
                     eps_pgd_train = min(iteration / n_iterations_max_eps * eps, eps) if args.dataset == 'svhn' else eps
                     delta = utils.attack_pgd_training(
-                        model, X, y, eps_pgd_train, pgd_alpha_train, opt, half_prec, args.pgd_train_n_iters, rs=pgd_rs, dist=dist)
+                        model, X, y, eps_pgd_train, pgd_alpha_train, args.pgd_train_n_iters, rs=pgd_rs, dist=dist)
 
                 elif args.attack == 'fgsm':
                     if args.attack_init == 'zero':
@@ -331,17 +256,12 @@ def main():
                     delta.data = clamp(X + delta.data, 0, 1) - X
 
                 elif args.attack == 'none':
-                    if (args.grad_reg != 0):
+                    if args.grad_reg != 0:
                         delta = torch.zeros_like(X, requires_grad=True)
                     else:
                         delta = torch.zeros_like(X, requires_grad=False)
 
-                elif args.attack == 'sigma':
-                    delta, out_adv = sigma_adv_attack(X, y, model, -1, 0.003, iter_n=40)
-                    delta = delta.detach()
-
                 elif args.attack == 'rlat':
-
                     deltas = [torch.zeros(delta_shapes[i], requires_grad=True, device=torch.device('cuda')) for i in range(delta_max)]
 
                     if args.eps_policy == "adaptive":
@@ -409,13 +329,10 @@ def main():
                     raise ValueError('wrong args.attack')
                 
                 if args.attack == 'rlat':
-                    if (args.without_input):
-                        deltas[0] = 0
+                    if args.layers != 'default':
+                        output = delta_forward(model, X, deltas, layers)
                     else:
-                        if args.layers != 'default':
-                            output = delta_forward(model, X, deltas, layers)
-                        else:
-                            output = model(X, delta=deltas, ri=ri)
+                        output = model(X, delta=deltas, ri=ri)
                 else:
                     if args.batch_part != 1.0:
                         batch_clean = int((1 - args.batch_part) * delta.shape[0])
@@ -425,24 +342,17 @@ def main():
                 output = model(X)
 
             loss = loss_function(output, y)
-            #print(loss)
             if args.grad_reg != 0.0:
                 g = torch.autograd.grad(loss, delta, create_graph=True, retain_graph=True)[0] * args.batch_size
                 g = g.view(args.batch_size, -1)
                 grad_norm = g.norm(2, 1).mean()
-                #print(grad_penalty, loss)
                 loss = grad_norm * args.grad_reg + loss
                 grad_norm_avg += grad_norm.detach()
 
-
-            if epoch != 0:  # epoch == 0: only evaluation
-                opt.zero_grad()
-                utils.backward(loss, opt, half_prec)
+            opt.zero_grad()
+            loss.backward()
+            if epoch != 0:
                 opt.step()
-            else:
-                opt.zero_grad()
-                utils.backward(loss, opt, half_prec)
-
 
             time_train += time.time() - time_start_iter
             train_loss += loss.item() * y.size(0)
@@ -480,11 +390,6 @@ def main():
                               'time_train', 'time_elapsed']
                 utils.update_metrics(metr_dict, metr_vals, metr_names)
 
-                if not args.debug:
-                    np.save('exps/{}.npy'.format(model_name), metr_dict)
-
-                
-
                 model.train()
                 train_loss, train_err_clean, train_n_clean = 0, 0, 0
 
@@ -495,14 +400,15 @@ def main():
             if epoch == args.epochs:  # only save and eval cifar10-c at the end
                 model_str = args.model_path.rsplit('.', 1)[0]
                 torch.save({'last': model.state_dict(), 'best': best_state_dict}, args.model_path)
-                
+
+                # we compute corruption accuracy only for cifar10; for imagenet-100, this should be done separately
                 if args.dataset == 'cifar10':
                     model.load_state_dict(torch.load(args.model_path)['last'])
                     corr_res_last = corr_eval(x_corrs, y_corrs, model)
                     print('Last model on CIFAR10-C: {:.3%}'.format(np.mean(corr_res_last)))
                     corr_data_last = pd.DataFrame({i+1: corr_res_last[i, :] for i in range(0, 5)}, index=corruptions)
                     corr_data_last.loc['average'] = {i+1: np.mean(corr_res_last, axis=1)[i] for i in range(0, 5)}
-                    corr_data_last['avg'] = corr_data_last[list(range(1,6))].mean(axis=1)
+                    corr_data_last['avg'] = corr_data_last[list(range(1, 6))].mean(axis=1)
                     corr_data_last.to_csv(model_str + '_last.csv')
                     print(corr_data_last)
 
@@ -511,14 +417,12 @@ def main():
                     print('Best model on CIFAR10-C: {:.3%}'.format(np.mean(corr_res_best)))
                     corr_data_best = pd.DataFrame({i+1: corr_res_best[i, :] for i in range(0, 5)}, index=corruptions)
                     corr_data_best.loc['average'] = {i+1: np.mean(corr_res_best, axis=1)[i] for i in range(0, 5)}
-                    corr_data_best['avg'] = corr_data_best[list(range(1,6))].mean(axis=1)
+                    corr_data_best['avg'] = corr_data_best[list(range(1, 6))].mean(axis=1)
                     corr_data_best.to_csv(model_str + '.csv')
                     print(corr_data_best)
 
-
             model.eval()
-            attack_iters, n_restarts = (50, 1) if not args.debug else (10, 1)
-            train_err, train_loss, _ = rob_err(train_batches_fast, model, eps, pgd_alpha, opt, half_prec, 0, 1)
+            train_err, train_loss, _ = rob_err(train_batches_fast, model, eps, pgd_alpha, opt, 0, 1)
 
             acc_corrs = []
   
@@ -536,47 +440,11 @@ def main():
 
                 logger.info('[corr]  err {:.2%}'.format(corr_err))
 
-            if not args.debug:
-                np.save('exps/{}.npy'.format(model_name), metr_dict)
-
-            if args.final_adv_eval and epoch == args.epochs:
-                context_manager = amp.disable_casts() if half_prec else utils.nullcontext()
-                with context_manager:
-                    last_state_dict = copy.deepcopy(model.state_dict())
-                    half_prec = False
-                    model.load_state_dict(last_state_dict)
-                    model.eval()
-                    opt = torch.optim.SGD(model.parameters(), lr=0)
-
-                    test_err, _, _ = rob_err(test_batches, model, eps, pgd_alpha, opt, half_prec, 0, 1)
-                    x_eval, y_eval, _ = data.get_xy_from_loader(test_batches)
-                    adversary = autoattack.AutoAttack(model, norm='Linf', eps=eps)
-                    x_eval_adv = adversary.run_standard_evaluation(x_eval, y_eval, bs=args.batch_size_eval)
-                    test_err_rob = (model(x_eval_adv).argmax(1) == y_eval).float().mean().item()
-                    logger.info('[last: test on {} points] err {:.2%}, err_rob {:.2%}'.format(args.n_final_eval, test_err, test_err_rob))
-                    metr_dict['test_err_final'], metr_dict['test_err_pgd_rr_final'] = test_err, test_err_rob
-
-                    if args.eval_early_stopped_model:
-                        model.load_state_dict(best_state_dict)
-                        model.eval()
-                        test_err, _, _ = rob_err(test_batches, model, eps, pgd_alpha, opt, half_prec, 0, 1)
-                        x_eval, y_eval, _ = data.get_xy_from_loader(test_batches)
-                        adversary = autoattack.AutoAttack(model, norm='Linf', eps=eps)
-                        x_eval_adv = adversary.run_standard_evaluation(x_eval, y_eval, bs=args.batch_size_eval)
-                        test_err_rob = (model(x_eval_adv).argmax(1) == y_eval).float().mean().item()
-                        logger.info('[best: test on {} points][iter={}] err {:.2%}, err_rob {:.2%}'.format(
-                            args.n_final_eval, best_iteration, test_err, test_err_rob))
-                        metr_dict['test_err_final_best'], metr_dict['test_err_pgd_rr_final_best'] = test_err, test_err_rob
-
-            if not args.debug:
-                np.save('exps/{}.npy'.format(model_name), metr_dict)
             model.train()
 
     logger.info('Done in {:.2f}m'.format((time.time() - start_time) / 60))
 
-    if args.debug:
-        import ipdb;ipdb.set_trace()
-
 
 if __name__ == "__main__":
     main()
+

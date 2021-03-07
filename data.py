@@ -1,7 +1,4 @@
-import os
-import torch
 import torch.utils.data as td
-import numpy as np
 from torchvision import datasets, transforms
 
 import torch
@@ -9,13 +6,8 @@ import tempfile
 import os
 import numpy as np
 
-from torchvision.datasets import CIFAR10
-
 from robustness.datasets import CIFAR, DATASETS, DataSet, CustomImageNet
-from robustness.data_augmentation import TRAIN_TRANSFORMS_IMAGENET, \
-    TEST_TRANSFORMS_IMAGENET
-from robustness import data_augmentation
-from torchvision.datasets.vision import VisionDataset 
+from robustbench.data import load_cifar10c, load_cifar10
 
 # Loaders for Imagenet100 were taken from https://github.com/cassidylaidlaw/perceptual-advex
 
@@ -163,74 +155,10 @@ class ImageNet100C(CustomImageNet):
             **kwargs,
         )
 
-class BirdOrBicycle(DataSet):
-    """
-    Bird-or-bicycle dataset.
-    https://github.com/google/unrestricted-adversarial-examples/tree/master/bird-or-bicycle
-    """
-
-    def __init__(self, data_path=None, **kwargs):
-        ds_name = 'bird_or_bicycle'
-        import bird_or_bicycle
-
-        # Need to create a temporary directory to act as the dataset because
-        # the robustness library expects a particular directory structure.
-        data_path = tempfile.mkdtemp()
-        os.symlink(bird_or_bicycle.get_dataset('extras'),
-                   os.path.join(data_path, 'train'))
-        os.symlink(bird_or_bicycle.get_dataset('test'),
-                   os.path.join(data_path, 'test'))
-
-        ds_kwargs = {
-            'num_classes': 2,
-            'mean': torch.tensor([0.4717, 0.4499, 0.3837]), 
-            'std': torch.tensor([0.2600, 0.2516, 0.2575]),
-            'custom_class': None,
-            'label_mapping': None,
-            'transform_train': TRAIN_TRANSFORMS_IMAGENET,
-            'transform_test': TEST_TRANSFORMS_IMAGENET,
-        }
-        super().__init__(ds_name, data_path, **ds_kwargs)
-
 
 DATASETS['imagenet100'] = ImageNet100
 DATASETS['imagenet100a'] = ImageNet100A
 DATASETS['imagenet100c'] = ImageNet100C
-DATASETS['bird_or_bicycle'] = BirdOrBicycle
-
-
-class DatasetWithLabelNoise(torch.utils.data.Dataset):
-    def __init__(self, data, transform):
-        self.data = data
-        self.transform = transform
-
-    def __getitem__(self, index):
-        x = self.data.data[index]
-        x = self.transform(x) if self.transform is not None else x
-        y = self.data.targets[index]
-        label_noise = self.data.label_noise[index]
-        return x, y, label_noise
-
-    def __len__(self):
-        return len(self.data.targets)
-
-
-def uniform_noise(train_set, **kwargs):
-    if train_set:
-        shape = [1000, 1, 28, 28]
-        x = torch.from_numpy(np.random.rand(*shape)).float()
-        # y_train = np.random.randint(0, 10, size=shape_train[0])
-        y = np.floor(10 * x[:, 0, 0, 0].numpy())  # take the first feature
-        y = torch.from_numpy(y).long()
-        data = td.TensorDataset(x, y)
-    else:
-        shape = [1000, 1, 28, 28]
-        x = torch.from_numpy(np.random.rand(*shape)).float()
-        # y_test = np.random.randint(0, 10, size=shape_test[0])
-        y = np.floor(10 * x[:, 0, 0, 0].numpy())  # take the first feature
-        y = torch.from_numpy(y).long()
-        data = td.TensorDataset(x, y)
-    return data
 
 
 def get_loaders(dataset, n_ex, batch_size, train_set, shuffle, data_augm, n_train=-1, p_label_noise=0.0, drop_last=False):
@@ -336,7 +264,6 @@ def get_loaders(dataset, n_ex, batch_size, train_set, shuffle, data_augm, n_trai
                 data.targets[index] = np.random.choice(lst_classes)
             data.label_noise[indices] = True
 
-        #data = DatasetWithLabelNoise(data, transform)
         loader = torch.utils.data.DataLoader(dataset=data, batch_size=batch_size, shuffle=shuffle, pin_memory=True,
                                              num_workers=num_workers, drop_last=drop_last)
     else:
@@ -359,7 +286,6 @@ def get_loaders(dataset, n_ex, batch_size, train_set, shuffle, data_augm, n_trai
         data.data, data.targets = data.data[:n_ex], data.targets[:n_ex]
 
         data.label_noise = np.zeros(n_ex)
-        #data = DatasetWithLabelNoise(data, transform)
         loader = torch.utils.data.DataLoader(dataset=data, batch_size=batch_size, shuffle=shuffle, pin_memory=False,
                                              num_workers=2, drop_last=drop_last)
     return loader
@@ -384,13 +310,40 @@ def get_xy_from_loader(loader, cuda=True):
     return x_vals, y_vals, ln_vals
 
 
+def get_cifar10_numpy():
+    x_clean, y_clean = load_cifar10(n_examples=10000, data_dir='../data')
+    x_corrs = []
+    y_corrs = []
+    x_corrs.append(x_clean)
+    y_corrs.append(y_clean)
+    for i in range(1, 6):
+        x_corr = []
+        y_corr = []
+        for j, corr in enumerate(corruptions):
+            x_, y_ = load_cifar10c(n_examples=10000, data_dir='../data', severity=i, corruptions=(corr,))
+            x_corr.append(x_)
+            y_corr.append(y_)
+
+        x_corrs.append(x_corr)
+        y_corrs.append(y_corr)
+
+    x_corrs_fast = []
+    y_corrs_fast = []
+    for i in range(1, 6):
+        x_, y_ = load_cifar10c(n_examples=1000, data_dir='../data', severity=i, shuffle=True)
+        x_corrs_fast.append(x_)
+        y_corrs_fast.append(y_)
+
+    return x_corrs, y_corrs, x_corrs_fast, y_corrs_fast
+
+
 datasets_dict = {'mnist': datasets.MNIST, 'mnist_binary': datasets.MNIST, 'svhn': datasets.SVHN, 'cifar10': datasets.CIFAR10,
-                 'cifar10_binary': datasets.CIFAR10, 'cifar10_binary_gs': datasets.CIFAR10,
-                 'uniform_noise': uniform_noise, 'imagenet100': ImageNet100, 'SIN': ImageNet100
+                 'cifar10_binary': datasets.CIFAR10, 'cifar10_binary_gs': datasets.CIFAR10, 'imagenet100': ImageNet100,
+                 'SIN': ImageNet100
                  }
 shapes_dict = {'mnist': (60000, 1, 28, 28), 'mnist_binary': (13007, 1, 28, 28), 'svhn': (73257, 3, 32, 32),
                'cifar10': (50000, 3, 32, 32), 'cifar10_binary': (10000, 3, 32, 32),
-               'cifar10_binary_gs': (10000, 1, 32, 32), 'uniform_noise': (1000, 1, 28, 28), 'imagenet100' : (10000,3,224,224)
+               'cifar10_binary_gs': (10000, 1, 32, 32), 'uniform_noise': (1000, 1, 28, 28), 'imagenet100': (10000,3,224,224)
                }
 classes_dict = {'cifar10': {0: 'airplane',
                             1: 'automobile',
@@ -404,3 +357,6 @@ classes_dict = {'cifar10': {0: 'airplane',
                             9: 'truck',
                             }
                 }
+corruptions = ['shot_noise', 'motion_blur', 'snow', 'pixelate', 'gaussian_noise', 'defocus_blur',
+               'brightness', 'fog', 'zoom_blur', 'frost', 'glass_blur', 'impulse_noise', 'contrast',
+               'jpeg_compression', 'elastic_transform']

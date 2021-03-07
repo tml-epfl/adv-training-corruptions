@@ -8,8 +8,6 @@
 
 
 
-
-
 ## Abstract
 The literature on robustness towards common corruptions shows no consensus on whether adversarial training can improve 
 the performance in this setting. First, we show that, when used with an appropriately selected perturbation radius, L<sub>p</sub> 
@@ -65,24 +63,36 @@ when combined with different data augmentation methods.
 
 
 ## Code
-The main dependencies are specified in `requirements.txt`. To train new models, one can use the following commands:
+The main dependencies are specified in `requirements.txt`.
+ 
+To train new models, one can use the following commands:
 
-- Standard training:
-`python train.py --eps 0.0 --attack none --epochs 150 --data_dir ../datasets/ --model_path models/standard.pt`
+- Standard training on CIFAR-10:
+`python train.py --eps=0.0 --attack=none --epochs=150 --model_path='models/standard-cifar10.pt'`
 
-- L<sub>2</sub> adversarial training with eps=0.1=25.5/255:
-`python train.py --eps 0.1 --attack pgd --distance l2 --epochs 150 --data_dir ../datasets/ --model_path models/l2_0.1.pt`
+- L<sub>2</sub> adversarial training with `eps=0.1` on CIFAR-10:
+`python train.py --eps=0.1 --attack=pgd --distance=l2 --epochs=150 --model_path='models/l2-at-eps=0.1-cifar10.pt'`
 
-- Relaxed LPIPS adversarial training (RLAT) model:
-`python train.py --eps 0.08 --attack rlat --distance l2 --epochs 150 --data_dir ../datasets/ --model_path models/rlat_0.08.pt`
+- Relaxed LPIPS adversarial training (RLAT) with `eps=0.08` on CIFAR-10:
+`python train.py --eps=0.08 --attack=rlat --distance=l2 --epochs=150 --model_path='models/rlat_eps=0.08-cifar10.pt'`
+
+Training ImageNet models can be done similarly but you additionally need to have the ImageNet dataset in folder `<dataset_directory>/imagenet` 
+where the default value of `<dataset_directory>` is `./datasets` (see `train.py`).
 
 
 
 ## Models
-We provide all the models reported in Tables 3 and 4 in [this Google drive folder](https://drive.google.com/drive/folders/1drD6E3xX2ERjIuYoZjFleTZ7rr7WcYBq?usp=sharing).
+We provide all the models reported in Tables 3 and 4 in [this Google drive folder](https://drive.google.com/drive/folders/1drD6E3xX2ERjIuYoZjFleTZ7rr7WcYBq?usp=sharing). 
+
+Example how to run evaluation of a model:
+- `python eval_cifar10c.py --checkpoint=models_paper/cifar10/rlat-eps=0.08-cifar10.pt`
+- `python eval_imagenet100c.py --checkpoint=models_paper/imagenet100/rlat-eps=0.02-imagenet100.pt`
+
+Note that the CIFAR-10 Fast PAT model `fast-pat-eps=0.02-cifar10.pt` is the only exception and requires the 
+[original code](https://github.com/cassidylaidlaw/perceptual-advex) to be properly restored.
 
 
 
 ## Full evaluation results
 We additionally provide detailed evaluation results for each corruption type and each severity level for all CIFAR-10 
-and ImageNet-100 models in folder `full_evaluation_results`.
+and ImageNet-100 models in folder [`full_evaluation_results`](https://github.com/tml-epfl/adv-training-corruptions/tree/main/full_evaluation_results).
