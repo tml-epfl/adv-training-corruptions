@@ -82,7 +82,11 @@ where the default value of `<dataset_directory>` is `./datasets` (see `train.py`
 
 
 ## Models
-We provide all the models reported in Tables 3 and 4 in [this Google drive folder](https://drive.google.com/drive/folders/1drD6E3xX2ERjIuYoZjFleTZ7rr7WcYBq?usp=sharing). 
+We provide all the models reported in Tables 3 and 4 in [this Google drive folder](https://drive.google.com/drive/folders/1drD6E3xX2ERjIuYoZjFleTZ7rr7WcYBq?usp=sharing). Additionally, some models are available via the Model Zoo of `RobustBench` (see [here](https://github.com/RobustBench/robustbench#common-corruptions)) where models can be loaded via one line (automatic download): 
+```python
+from robustbench.utils import load_model
+model = load_model(model_name='Kireev2021Effectiveness_RLATAugMix', dataset='cifar10', threat_model='corruptions')
+```
 
 Example how to run evaluation of a model:
 - `python eval_cifar10c.py --checkpoint=models_paper/cifar10/rlat-eps=0.08-cifar10.pt`
