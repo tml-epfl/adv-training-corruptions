@@ -47,8 +47,8 @@ which can be efficiently solved using an FGSM-like algorithm:
 Finally, we present experiments where we show that RLAT achieves competitive results on common corruptions compared to 
 the existing baselines. In particular, RLAT outperforms L<sub>p</sub> adversarial training and gives additional improvement
 when combined with different data augmentation methods.
-<p align="center"><img src="images/results_cifar10.png" width="750"></p>
-<p align="center"><img src="images/results_imagenet100.png" width="750"></p>
+<p align="center"><img src="images/results_cifar10.png" width="550"></p>
+<p align="center"><img src="images/results_imagenet100.png" width="550"></p>
 
 
 
