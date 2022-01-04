@@ -9,17 +9,7 @@
 
 
 ## Abstract
-The literature on robustness towards common corruptions shows no consensus on whether adversarial training can improve 
-the performance in this setting. First, we show that, when used with an appropriately selected perturbation radius, L<sub>p</sub> 
-adversarial training can serve as a strong baseline against common corruptions. Then we explain why adversarial training 
-performs better than data augmentation with simple Gaussian noise which has been observed to be a meaningful baseline on 
-common corruptions. Related to this, we identify the *σ-overfitting phenomenon* when Gaussian augmentation overfits to a 
-particular standard deviation used for training which has a significant detrimental effect on common corruption accuracy. 
-We discuss how to alleviate this problem and then how to further enhance L<sub>p</sub> adversarial training by introducing an 
-efficient relaxation of adversarial training with learned perceptual image patch similarity as the distance metric. 
-Through experiments on CIFAR-10 and ImageNet-100, we show that our approach does not only improve the L<sub>p</sub> adversarial 
-training baseline but also has cumulative gains with data augmentation methods such as AugMix, ANT, and SIN leading to 
-state-of-the-art performance on common corruptions.
+The literature on robustness towards common corruptions shows no consensus on whether adversarial training can improve the performance in this setting. First, we show that, when used with an appropriately selected perturbation radius, Lp adversarial training can serve as a strong baseline against common corruptions improving both accuracy and calibration. Then we explain why adversarial training performs better than data augmentation with simple Gaussian noise which has been observed to be a meaningful baseline on common corruptions. Related to this, we identify the *σ-overfitting* phenomenon when Gaussian augmentation overfits to a particular standard deviation used for training which has a significant detrimental effect on common corruption accuracy. We discuss how to alleviate this problem and then how to further enhance Lp adversarial training by introducing an *efficient relaxation* of adversarial training with *learned perceptual image patch similarity* as the distance metric. Through experiments on CIFAR-10 and ImageNet-100, we show that our approach does not only improve the Lp adversarial training baseline but also has cumulative gains with data augmentation methods such as AugMix, DeepAugment, ANT, and SIN, leading to state-of-the-art performance on common corruptions.
 
 
 
