@@ -4,6 +4,8 @@
 
 **Paper:** [https://arxiv.org/abs/2103.02325](https://arxiv.org/abs/2103.02325)
 
+**UAI 2022**
+
 \*Equal contribution.
 
 
